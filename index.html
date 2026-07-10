@@ -40,6 +40,20 @@ document.addEventListener('DOMContentLoaded', async function() {
 
   // Error sink persists across replaceWith since it's on window, not the DOM.
   window.addEventListener('error', function(e) {
+    // Ignore resource-load failures for un-interpolated template
+    // placeholders (e.g. <img src="{{ item.img }}">). The app's own
+    // template engine reads these {{ }} markers from the live markup
+    // after mount and swaps in the real URL; the browser's eager,
+    // pre-hydration fetch attempt against the literal placeholder text
+    // is expected and harmless, not a genuine bundler failure — so it
+    // should not surface in the error banner.
+    if (e.target && e.target.getAttribute) {
+      var placeholderAttrs = ['src', 'href', 'srcset'];
+      for (var i = 0; i < placeholderAttrs.length; i++) {
+        var v = e.target.getAttribute(placeholderAttrs[i]);
+        if (v && v.indexOf('{{') !== -1) return;
+      }
+    }
     var p = document.body || document.documentElement;
     var d = document.getElementById('__bundler_err') || p.appendChild(document.createElement('div'));
     d.id = '__bundler_err';
@@ -143,22 +157,6 @@ document.addEventListener('DOMContentLoaded', async function() {
     // createElement so they execute, awaiting onload for src scripts to
     // preserve ordering (React before ReactDOM before Babel before text/babel).
     const doc = new DOMParser().parseFromString(template, 'text/html');
-    // Neutralize un-interpolated template placeholders (e.g. src="{{ item.img }}")
-    // BEFORE the document is attached to the page. `doc` here is still an
-    // inert, detached document (DOMParser output), so mutating attributes
-    // now triggers no network requests. Once replaceWith() runs, any
-    // leftover "{{ ... }}" left in src/href/srcset would be treated as a
-    // literal (bogus) URL and the browser would fire a doomed request for
-    // it, which is what produced the "Failed to load resource ... 404"
-    // + red [bundle] error banner — a harmless race between this raw shell
-    // paint and the DC runtime's own re-render of that same node.
-    doc.querySelectorAll('[src], [href], [srcset]').forEach((el) => {
-      ['src', 'href', 'srcset'].forEach((attr) => {
-        const v = el.getAttribute(attr);
-        if (v && v.indexOf('{{') !== -1) el.removeAttribute(attr);
-      });
-    });
-
     document.documentElement.replaceWith(doc.documentElement);
     const dead = Array.from(document.scripts);
     for (const old of dead) {
