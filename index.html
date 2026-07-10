@@ -143,6 +143,22 @@ document.addEventListener('DOMContentLoaded', async function() {
     // createElement so they execute, awaiting onload for src scripts to
     // preserve ordering (React before ReactDOM before Babel before text/babel).
     const doc = new DOMParser().parseFromString(template, 'text/html');
+    // Neutralize un-interpolated template placeholders (e.g. src="{{ item.img }}")
+    // BEFORE the document is attached to the page. `doc` here is still an
+    // inert, detached document (DOMParser output), so mutating attributes
+    // now triggers no network requests. Once replaceWith() runs, any
+    // leftover "{{ ... }}" left in src/href/srcset would be treated as a
+    // literal (bogus) URL and the browser would fire a doomed request for
+    // it, which is what produced the "Failed to load resource ... 404"
+    // + red [bundle] error banner — a harmless race between this raw shell
+    // paint and the DC runtime's own re-render of that same node.
+    doc.querySelectorAll('[src], [href], [srcset]').forEach((el) => {
+      ['src', 'href', 'srcset'].forEach((attr) => {
+        const v = el.getAttribute(attr);
+        if (v && v.indexOf('{{') !== -1) el.removeAttribute(attr);
+      });
+    });
+
     document.documentElement.replaceWith(doc.documentElement);
     const dead = Array.from(document.scripts);
     for (const old of dead) {
